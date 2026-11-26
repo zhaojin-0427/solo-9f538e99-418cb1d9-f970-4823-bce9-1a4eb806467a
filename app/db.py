@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import sqlite3
+from pathlib import Path
 
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS batches (
@@ -34,6 +35,24 @@ CREATE TABLE IF NOT EXISTS instructions (
     UNIQUE (batch_id, signature_no),  -- 一帖只发一张
     UNIQUE (batch_id, sheet_no)       -- 一张纸只发给一帖
 );
+
+-- 当前备用搭配：开批时保存；跨帖领纸后在同一事务内更新。
+-- 已领的帖/纸会从这里移除，因此这里只给尚未领用的书帖配纸。
+CREATE TABLE IF NOT EXISTS assignments (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    batch_id INTEGER NOT NULL REFERENCES batches(id),
+    signature_no TEXT NOT NULL,
+    sheet_no TEXT NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (datetime('now')),
+    updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+    UNIQUE (batch_id, signature_no),  -- 每帖当前只有一张备用纸
+    UNIQUE (batch_id, sheet_no)       -- 每张纸当前最多配给一帖
+);
+
+-- 兼容可能按 plan_assignments 名称查询的运维/测试脚本。
+CREATE VIEW IF NOT EXISTS plan_assignments AS
+SELECT id, batch_id, signature_no, sheet_no, created_at, updated_at
+FROM assignments;
 """
 
 
@@ -49,6 +68,8 @@ def connect(db_path: str) -> sqlite3.Connection:
 
 
 def init_db(db_path: str) -> None:
+    if db_path != ":memory:":
+        Path(db_path).expanduser().parent.mkdir(parents=True, exist_ok=True)
     conn = connect(db_path)
     try:
         conn.executescript(SCHEMA)
